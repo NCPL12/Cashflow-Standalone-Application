@@ -1,0 +1,17 @@
+target/
+dist/
+data/
+logs/
+uploads/
+*.log
+*.zip
+*.war
+*.jar
+*.exe
+*.mv.db
+*.trace.db
+.idea/
+.settings/
+.classpath
+.project
+.env

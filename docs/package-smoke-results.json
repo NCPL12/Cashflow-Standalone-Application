@@ -1,0 +1,84 @@
+{
+  "status": "PASSED",
+  "checks": [
+    "Fresh standalone startup uses Cashflow login",
+    "Application responds on host LAN interface",
+    "Public asset /cashflow-analyzer/js/module-paths.js",
+    "Public asset /cashflow-analyzer/js/auth.js",
+    "Public asset /cashflow-analyzer/css/app-theme.css",
+    "Public asset /cashflow-analyzer/images/neptune-logo.ico",
+    "Anonymous overview requires login",
+    "Fresh administrator login opens Cashflow overview",
+    "Retention column and filter are present",
+    "Administrator opens standalone user management",
+    "User management supplies CSRF token",
+    "User creation without CSRF is rejected",
+    "Administrator creates enabled finance user",
+    "Finance user login opens Cashflow overview",
+    "Finance user cannot access user management",
+    "Finance user cannot read legacy user API",
+    "Tally endpoint and enabled state load from packaged external config",
+    "Read-only Tally sync completes through packaged API",
+    "Receivables total includes retention once",
+    "Separate retention value is 250 and ordinary invoice retention is zero",
+    "Payables sync and classification match mock Tally",
+    "Unavailable Tally is reported as a sync failure",
+    "Last successful balances survive Tally failure",
+    "Retention-only Excel export is generated",
+    "Disabled finance user cannot log in",
+    "Mock observed only Export requests, no writes to Tally",
+    "Administrator credentials persist after restart without setup credentials",
+    "Synced balances persist after restart",
+    "Administrator reset accepts the new password",
+    "Administrator reset rejects the old password",
+    "Administrator reset preserves synced balances",
+    "Administrator reset preserves other user accounts"
+  ],
+  "realTallyContacted": false,
+  "lanInterfaceChecked": "192.168.0.215",
+  "tallyConfigurationObserved": {
+    "status": 200,
+    "response": {
+      "success": true,
+      "config": {
+        "syncInProgress": false,
+        "lastSync": "Never",
+        "forceSync": false,
+        "serverUrl": "http://127.0.0.1:19000",
+        "serverAvailable": true,
+        "minInvoiceDate": null,
+        "maxInvoiceDate": null,
+        "enabled": true,
+        "lastStatus": "Not yet run"
+      },
+      "syncStatus": null
+    }
+  },
+  "mockTallyRequests": [
+    {
+      "action": "Export",
+      "id": "CashflowAdvanceGroups"
+    },
+    {
+      "action": "Export",
+      "id": "CashflowAdvanceLedgers"
+    },
+    {
+      "action": "Export",
+      "id": "CashflowOutstandingBills"
+    },
+    {
+      "action": "Export",
+      "id": "CashflowAdvanceGroups"
+    },
+    {
+      "action": "Export",
+      "id": "CashflowAdvanceLedgers"
+    },
+    {
+      "action": "Export",
+      "id": "CashflowOutstandingBills"
+    }
+  ],
+  "mockTallyViolations": []
+}

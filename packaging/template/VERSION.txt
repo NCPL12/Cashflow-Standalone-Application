@@ -1,0 +1,7 @@
+Neptune Cashflow Finance
+Build date: 5 November 2026
+Standalone profile; embedded H2; first administrator provisioning.
+Administrator user management and Finance user role; LAN port 8081.
+Retention separate column/filter using ERP-equivalent dedicated-ledger logic.
+Tally: configurable local HTTP/XML read-only report connection, default 127.0.0.1:9000.
+Fresh install package: application database and user accounts are not included.
