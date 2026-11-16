@@ -25,9 +25,10 @@ public class FinanceCashPlanController {
 
     @GetMapping("/summary")
     public ResponseEntity<?> summary(@RequestParam(required = false) String startMonth,
-                                     @RequestParam(defaultValue = "3") int months) {
+                                     @RequestParam(defaultValue = "3") int months,
+                                     @RequestParam(defaultValue = "false") boolean retentionOnly) {
         try {
-            return ResponseEntity.ok(service.buildPlan(parseMonth(startMonth), months));
+            return ResponseEntity.ok(service.buildPlan(parseMonth(startMonth), months, retentionOnly));
         } catch (Exception e) {
             return badRequest(e);
         }

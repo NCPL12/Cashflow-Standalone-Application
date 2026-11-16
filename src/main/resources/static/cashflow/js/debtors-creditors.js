@@ -1,4 +1,3 @@
-/* Unused module disabled: not in use.
 (() => {
     const charts = {
         debtors: null,
@@ -191,4 +190,3 @@
     window.downloadDebtorsCreditors = downloadDebtorsCreditors;
 
 })();
-*/

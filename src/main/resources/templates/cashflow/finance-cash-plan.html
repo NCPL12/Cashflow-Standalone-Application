@@ -13,7 +13,7 @@
         if(localStorage.getItem('financeSidebarCollapsed')==='true') document.documentElement.classList.add('sidebar-precollapsed');
     </script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-    <link rel="stylesheet" th:href="@{/cashflow-analyzer/css/app-theme.css?v=20260825-table-alignment}" />
+    <link rel="stylesheet" th:href="@{/cashflow-analyzer/css/app-theme.css?v=20261113-hide-graphs}" />
     <link rel="stylesheet" th:href="@{/cashflow-analyzer/css/finance-cash-plan.css?v=20260924-simple-statement}" />
 </head>
 <body>
@@ -58,12 +58,13 @@
         <label>Starting month<input type="month" id="startMonth" /></label>
         <label>Plan length<select id="monthCount"><option value="3">3 months</option><option value="6">6 months</option><option value="12">12 months</option></select></label>
         <button class="primary" id="refreshPlan"><i class="fas fa-rotate"></i> Refresh</button>
+        <div role="group" aria-label="Monthly statement view"><button type="button" class="primary" data-plan-view="normal" aria-pressed="true">Normal cash flow</button> <button type="button" class="secondary" data-plan-view="retention" aria-pressed="false">Retention only</button></div>
         <div class="plan-status" id="planStatus" role="status"></div>
     </section>
 
     <section class="plan-card">
         <div class="section-title">
-            <div><h2>Monthly cash flow</h2><p>Net flow = total cash in − total cash out.</p></div>
+            <div><h2 id="statementTitle">Monthly cash flow — excluding retention</h2><p id="statementExplanation">Retention is kept separate from normal monthly cash flow.</p></div>
             <div class="statement-actions">
                 <button class="secondary" id="manualEdit"><i class="fas fa-pen"></i> Edit manually</button>
                 <button class="primary" id="saveManual" hidden><i class="fas fa-floppy-disk"></i> Save</button>
@@ -75,16 +76,20 @@
         <div class="table-wrap"><table class="summary-table"><thead id="summaryHead"></thead><tbody id="summaryBody"></tbody></table></div>
         <p class="support-note">Cash in and cash out are loaded from Tally. Use <strong>Edit manually</strong> to enter monthly adjustments.</p>
     </section>
+    <section class="plan-card" aria-label="Retention balances kept separate">
+        <h2>Retention balances — separate from monthly cash flow</h2>
+        <p>These are outstanding balances, not additional monthly cash receipts or payments.</p>
+        <div class="table-wrap"><table class="summary-table"><tbody>
+        <tr><td>Retention receivable balance</td><td id="retentionReceivableBalance">—</td></tr>
+        <tr><td>Retention payable balance</td><td id="retentionPayableBalance">—</td></tr>
+        <tr><td>Net retention awaiting an expected date</td><td id="retentionAwaitingDate">—</td></tr>
+        </tbody></table></div>
+        <p class="support-note" id="retentionAwaitingCount"></p>
+        <p class="support-note">Set expected retention release/payment dates in Cash Flow Forecast → Retention only → View unscheduled bills.</p>
+    </section>
 </main>
 
 <script th:src="@{/cashflow-analyzer/js/app-theme.js?v=20260924-erp-navigation-2}"></script>
-<script th:src="@{/cashflow-analyzer/js/finance-cash-plan.js?v=20260924-simple-statement}"></script>
+<script th:src="@{/cashflow-analyzer/js/finance-cash-plan.js?v=20261113-live-payment-terms}"></script>
 </body>
 </html>
-
-
-
-
-
-
-

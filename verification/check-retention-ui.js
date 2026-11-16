@@ -1,0 +1,10 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const source=fs.readFileSync('src/main/resources/static/cashflow/js/overview-dashboard.js','utf8');
+function fn(name){const start=source.indexOf('function '+name+'('),end=source.indexOf('\nfunction ',start+10);let result=source.slice(start,end<0?undefined:end);if(name==='refreshOutstandingCounts')result='async '+result;return result;}
+const fields={};const context={window:{outstandingState:{rows:[{invoiceNumber:'NORMAL',retention:false,partyName:'Customer'},{invoiceNumber:'RET',retention:true,partyName:'Retention Customer'}]}},document:{getElementById:id=>fields[id]||null},formatCurrency:v=>String(v),renderFinanceSnapshot:()=>{},console,fetchOutstanding:async type=>({count:1,total:type==='receivables'?1000:600,allCount:2,allTotal:type==='receivables'?1250:700})};
+vm.createContext(context);vm.runInContext(fn('getFilteredOutstandingRows'),context);
+assert.equal(context.getFilteredOutstandingRows().length,1);assert.equal(context.getFilteredOutstandingRows()[0].invoiceNumber,'NORMAL');context.window.outstandingRetentionOnly=true;assert.equal(context.getFilteredOutstandingRows()[0].invoiceNumber,'RET');
+for(const id of ['outstandingReceivablesCount','outstandingPayablesCount','totalInflow','totalOutflow','netCashflow'])fields[id]={};
+// Extract async function up to the next function declaration.
+let start=source.indexOf('async function refreshOutstandingCounts('),end=source.indexOf('\nfunction ',start);let code=source.slice(start,end);const nextAsync=code.indexOf('\nasync function ',10);if(nextAsync>=0)code=code.slice(0,nextAsync);vm.runInContext(code,context);
+context.refreshOutstandingCounts().then(()=>{assert.equal(fields.totalInflow.textContent,'1250');assert.equal(fields.totalOutflow.textContent,'700');assert.equal(fields.outstandingReceivablesCount.textContent,'2 bills');console.log('PASS regular and retention table filters; inclusive overview tiles and counts');}).catch(e=>{console.error(e);process.exit(1)});

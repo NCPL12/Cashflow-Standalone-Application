@@ -1,28 +1,31 @@
-# Source handoff verification — 5 November 2026
+# Standalone repository verification - 16 November 2026
 
-- Independent Maven verify build: SUCCESS.
-- All 40 Cashflow Java tests passed (zero failures/errors).
-- All 32 fresh-database packaged HTTP checks passed using the WAR built from this source.
-- Verified admin/Finance accounts, authorization, CSRF, assets, host LAN interface,
-  external Tally config, mock read-only sync, retention/export, unavailable Tally
-  snapshot preservation, restart persistence and administrator reset preservation.
-- No office Tally or live application was changed during extraction/tests.
-- Windows packaging script parsed successfully. Installer templates are copied
-  from the previously verified Finance installer; Java runtime is supplied by
-  the developer when rebuilding the Windows package.
-- Source scope: 63 Java files (Cashflow plus required security/role/coordinator
-  support), Cashflow-only templates/static resources, tests, configuration and
-  packaging source. No ERP stock/purchase-order export application source.
+Combined the 13 November standalone release with the repository's existing
+administrator protection, XLS/XLSX import and disabled-module changes.
 
-## Extraction changes
+`mvn -B -o -DforkCount=0 verify` passed 106 tests with no failures, errors or skips.
+The build used JDK 21.0.11 and Maven 3.9.16. Changed JavaScript files passed Node
+syntax checks. The two JavaScript retention checks passed for inclusive overview
+totals, separated detail views, monthly rows and CSV exports.
 
-Cashflow/backend/UI files originate from the tested 5 November Finance release.
-The POM/dependencies/resources are scoped to Cashflow, the default profile is
-standalone, old commented example credentials were removed from UserService,
-and the standalone ERP-link pipeline returns an informational unavailable result
-instead of querying absent ERP operational tables. Two inherited test expectations
-now reflect current snapshot-failure and cost-centre company-validation behavior.
-The installed Finance package and running host were not modified.
+The packaged-app smoke test uses fresh local H2 storage and a mock Tally endpoint.
+It makes no requests to production Tally or the installed Finance database.
+All 58 packaged-app checks passed, including startup, user management, restart and
+administrator-reset persistence, retention separation/exports, automatic payment
+term discovery, narration edits/removal, cached warnings and failure recovery.
+The mock recorded only Export requests and no Tally writes.
 
-Live Tally company connectivity still depends on the deployment PC's reachable
-Tally address, port and exact company name. The handoff tests use a local mock.
+## Historical release verification - 13 November 2026
+
+Unit and packaged-app regression results are recorded in this release's final manifest.
+Packaged tests cover three unconfigured invoice references, editing a percentage without
+changing balance, removing terms, cache/offline warnings/recovery, login/users/restart,
+retention independence, read-only Tally requests and unchanged other outstanding screens.
+Live read-only reconciliation into an isolated local H2 database found nine ordinary
+invoices with the supported pattern. Their deferred amounts reconciled invoice-by-invoice
+and month-by-month, with no unresolved review cases in that run. Already allocated
+BLR2026232 was not split again. Production Tally and installed databases were not changed.
+The source and full installer exclude live snapshots, accounts and the live cache.
+Graphs navigation remains hidden by the existing reversible shared CSS rule.
+
+Final results: 85 Java tests, 58 packaged-app checks, and 12 live read-only reconciliation checks passed. Live matching ordinary invoice count: 9; review cases in that run: 0.

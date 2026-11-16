@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <link rel="stylesheet" th:href="@{/cashflow-analyzer/css/animations.css}" />
     <script>document.documentElement.setAttribute('data-theme',localStorage.getItem('neptuneColorTheme')||((window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light'));</script>
-    <link rel="stylesheet" th:href="@{/cashflow-analyzer/css/app-theme.css?v=20260825-table-alignment}">
+    <link rel="stylesheet" th:href="@{/cashflow-analyzer/css/app-theme.css?v=20261113-hide-graphs}">
     <style>
         body {
             background: #f0f4f8;
@@ -1759,7 +1759,7 @@
                         <table class="table table-hover outstanding-table">
                             <colgroup>
                                 <col class="col-party"><col class="col-bill"><col class="col-date"><col class="col-date"><col class="col-age">
-                                <col class="col-amount"><col class="col-retention"><col class="col-days"><col class="col-status">
+                                <col class="col-amount"><col class="col-retention" hidden><col class="col-days"><col class="col-status">
                             </colgroup>
                             <thead><tr>
                                 <th class="col-party" aria-sort="none"><button type="button" class="outstanding-sort" data-sort="partyName">Party <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
@@ -1767,8 +1767,8 @@
                                 <th class="col-date" aria-sort="none"><button type="button" class="outstanding-sort" data-sort="invoiceDate">Bill Date <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
                                 <th class="col-date" aria-sort="none"><button type="button" class="outstanding-sort" data-sort="dueDate">Due Date <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
                                 <th class="col-age" aria-sort="none"><button type="button" class="outstanding-sort" data-sort="billAgeDays">Bill Age <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
-                                <th class="col-amount" aria-sort="none"><button type="button" class="outstanding-sort" data-sort="amount">Outstanding <span id="outstandingFilteredTotal" aria-live="polite">—</span> <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
-                                <th class="col-retention" aria-sort="none" title="Retention is included in Outstanding; do not add it again"><button type="button" class="outstanding-sort" data-sort="retentionAmount">Retention <span id="outstandingRetentionTotal" aria-live="polite">—</span> <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
+                                <th class="col-amount" aria-sort="none"><button type="button" class="outstanding-sort" data-sort="amount"><span id="outstandingAmountLabel">Outstanding</span> <span id="outstandingFilteredTotal" aria-live="polite">—</span> <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
+                                <th class="col-retention" hidden aria-sort="none" title="Retention is displayed separately from normal outstanding"><button type="button" class="outstanding-sort" data-sort="retentionAmount">Retention <span id="outstandingRetentionTotal" aria-live="polite">—</span> <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
                                 <th class="col-days" aria-sort="none"><button type="button" class="outstanding-sort" data-sort="days">Days <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
                                 <th class="col-status" aria-sort="none"><button type="button" class="outstanding-sort" data-sort="status">Status <span class="sort-arrow" aria-hidden="true">↕</span></button></th>
                             </tr></thead>
@@ -2355,7 +2355,7 @@
     <script th:src="@{/cashflow-analyzer/js/auth.js?v=20260825-csrf-fix}"></script>
     <script th:src="@{/cashflow-analyzer/js/common-filters.js}"></script>
     <script th:src="@{/cashflow-analyzer/js/app-theme.js?v=20260924-erp-navigation-2}"></script>
-<script th:src="@{/cashflow-analyzer/js/overview-dashboard.js?v=20261009-retention}"></script>
+<script th:src="@{/cashflow-analyzer/js/overview-dashboard.js?v=20261113-retention-group}"></script>
     <script th:src="@{/cashflow-analyzer/js/reconciliation.js?v=20260824-dark-contrast}"></script>
     <script th:inline="javascript">
         // Small bridge for any remaining inline needs

@@ -4,6 +4,10 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 public class UpcomingInvoiceDTO {
+    private Boolean retention;
+    public Boolean getRetention() { return retention; }
+    public void setRetention(Boolean value) { retention=value; }
+
 
     private String invoiceNumber;
     private String customerName;
@@ -96,4 +100,3 @@ public class UpcomingInvoiceDTO {
         this.status = status;
     }
 }
-

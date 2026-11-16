@@ -294,3 +294,10 @@ html.sidebar-precollapsed .finance-theme-toggle span { display: none; }
 @media (max-width: 600px) {
     .theme-toggle-floating { right: 14px; bottom: 14px; }
 }
+
+/* Temporarily hide Graphs navigation; its pages, routes and scripts remain intact.
+   Remove this rule to restore the menu, including previously expanded submenus. */
+[data-graphs-toggle],
+[data-graphs-submenu] {
+    display: none !important;
+}

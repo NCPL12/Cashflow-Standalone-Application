@@ -83,7 +83,7 @@ public class ExcelExportService {
 
     public byte[] exportOutstandingInvoices(List<Invoice> invoices, String title) throws IOException {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-            Sheet sheet = workbook.createSheet("Outstanding Bills");
+            Sheet sheet = workbook.createSheet(title.startsWith("Retention") ? "Retention Bills" : "Outstanding Bills");
             CellStyle headerStyle = createHeaderStyle(workbook);
             CellStyle numberStyle = createNumberStyle(workbook);
             CellStyle dateStyle = createDateStyle(workbook);
@@ -100,13 +100,14 @@ public class ExcelExportService {
 
             Row header = sheet.createRow(2);
             String[] headers = {"Party Name", "Bill Number", "Bill Date", "Due Date", "Outstanding Amount",
-                    "Status", "Days Overdue", "Days Until Due", "Aging Bucket", "Retention Amount (included in Outstanding)"};
+                    "Status", "Days Overdue", "Days Until Due", "Aging Bucket"};
             for (int i = 0; i < headers.length; i++) {
                 Cell cell = header.createCell(i);
                 cell.setCellValue(headers[i]);
                 cell.setCellStyle(headerStyle);
             }
 
+            if (title.startsWith("Retention")) header.getCell(4).setCellValue("Retention Amount");
             int rowIdx = 3;
             for (Invoice invoice : invoices) {
                 Row row = sheet.createRow(rowIdx++);
@@ -117,15 +118,13 @@ public class ExcelExportService {
                 Cell amountCell = row.createCell(4);
                 amountCell.setCellValue(invoice.getInvoiceValue());
                 amountCell.setCellStyle(numberStyle);
-                row.createCell(5).setCellValue(invoice.isOverdue() ? "Overdue" : "Current");
+                row.createCell(5).setCellValue(Boolean.TRUE.equals(invoice.getRetentionBalanceOnly()) ? "Unallocated retention balance" : (invoice.isOverdue() ? "Overdue" : "Current"));
                 row.createCell(6).setCellValue(invoice.getDaysOverdue());
                 long daysUntilDue = invoice.getDaysUntilDue();
                 if (daysUntilDue != Long.MAX_VALUE) row.createCell(7).setCellValue(daysUntilDue);
                 else row.createCell(7).setCellValue("");
                 row.createCell(8).setCellValue(invoice.getAgingBucket());
-                Cell retentionCell = row.createCell(9);
-                retentionCell.setCellValue(RetentionLedgerClassifier.isRetention(invoice.getCustomerName()) ? invoice.getInvoiceValue() : 0d);
-                retentionCell.setCellStyle(numberStyle);
+
             }
 
             for (int i = 0; i < headers.length; i++) {
@@ -438,14 +437,14 @@ public class ExcelExportService {
     public byte[] exportOverdueInvoices(List<OverdueInvoiceDTO> receivables, List<OverdueInvoiceDTO> payables, String type) throws IOException {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
             Sheet sheet = workbook.createSheet("Overdue Invoices");
-            
+
             // Create styles
             CellStyle headerStyle = createHeaderStyle(workbook);
             CellStyle numberStyle = createNumberStyle(workbook);
             CellStyle dateStyle = createDateStyle(workbook);
-            
+
             int rowIdx = 0;
-            
+
             // Header row
             Row header = sheet.createRow(rowIdx++);
             String[] headers = {"Invoice Number", "Customer/Vendor Name", "Amount", "Due Date", "Days Overdue", "Severity"};
@@ -454,19 +453,19 @@ public class ExcelExportService {
                 cell.setCellValue(headers[i]);
                 cell.setCellStyle(headerStyle);
             }
-            
+
             // Data rows
-            List<OverdueInvoiceDTO> data = "receivables".equals(type) ? receivables : 
-                                          "payables".equals(type) ? payables : 
+            List<OverdueInvoiceDTO> data = "receivables".equals(type) ? receivables :
+                                          "payables".equals(type) ? payables :
                                           combineLists(receivables, payables);
-            
+
             for (OverdueInvoiceDTO invoice : data) {
                 Row row = sheet.createRow(rowIdx++);
                 int colIdx = 0;
-                
+
                 row.createCell(colIdx++).setCellValue(invoice.getInvoiceNumber() != null ? invoice.getInvoiceNumber() : "");
                 row.createCell(colIdx++).setCellValue(invoice.getCustomerName() != null ? invoice.getCustomerName() : "");
-                
+
                 Cell amountCell = row.createCell(colIdx++);
                 if (invoice.getAmount() != null) {
                     amountCell.setCellValue(invoice.getAmount().doubleValue());
@@ -475,7 +474,7 @@ public class ExcelExportService {
                     amountCell.setCellValue(0.0);
                     amountCell.setCellStyle(numberStyle);
                 }
-                
+
                 Cell dateCell = row.createCell(colIdx++);
                 if (invoice.getDueDate() != null) {
                     dateCell.setCellValue(java.sql.Date.valueOf(invoice.getDueDate()));
@@ -483,11 +482,11 @@ public class ExcelExportService {
                 } else {
                     dateCell.setCellValue("");
                 }
-                
+
                 row.createCell(colIdx++).setCellValue(invoice.getDaysOverdue());
                 row.createCell(colIdx++).setCellValue(invoice.getSeverity() != null ? invoice.getSeverity() : "");
             }
-            
+
             // Auto-size columns
             for (int i = 0; i < headers.length; i++) {
                 sheet.autoSizeColumn(i);
@@ -496,23 +495,23 @@ public class ExcelExportService {
                     sheet.setColumnWidth(i, 3000);
                 }
             }
-            
+
             workbook.write(outputStream);
             return outputStream.toByteArray();
         }
     }
-    
+
     public byte[] exportDueInvoices(List<UpcomingInvoiceDTO> receivables, List<UpcomingInvoiceDTO> payables, String type) throws IOException {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
             Sheet sheet = workbook.createSheet("Due Invoices");
-            
+
             // Create styles
             CellStyle headerStyle = createHeaderStyle(workbook);
             CellStyle numberStyle = createNumberStyle(workbook);
             CellStyle dateStyle = createDateStyle(workbook);
-            
+
             int rowIdx = 0;
-            
+
             // Header row
             Row header = sheet.createRow(rowIdx++);
             String[] headers = {"Invoice Number", "Customer/Vendor Name", "Amount", "Due Date", "Days Until Due", "Status"};
@@ -521,19 +520,19 @@ public class ExcelExportService {
                 cell.setCellValue(headers[i]);
                 cell.setCellStyle(headerStyle);
             }
-            
+
             // Data rows
-            List<UpcomingInvoiceDTO> data = "receivables".equals(type) ? receivables : 
-                                            "payables".equals(type) ? payables : 
+            List<UpcomingInvoiceDTO> data = "receivables".equals(type) ? receivables :
+                                            "payables".equals(type) ? payables :
                                             combineDueLists(receivables, payables);
-            
+
             for (UpcomingInvoiceDTO invoice : data) {
                 Row row = sheet.createRow(rowIdx++);
                 int colIdx = 0;
-                
+
                 row.createCell(colIdx++).setCellValue(invoice.getInvoiceNumber() != null ? invoice.getInvoiceNumber() : "");
                 row.createCell(colIdx++).setCellValue(invoice.getCustomerName() != null ? invoice.getCustomerName() : "");
-                
+
                 Cell amountCell = row.createCell(colIdx++);
                 if (invoice.getAmount() != null) {
                     amountCell.setCellValue(invoice.getAmount().doubleValue());
@@ -542,7 +541,7 @@ public class ExcelExportService {
                     amountCell.setCellValue(0.0);
                     amountCell.setCellStyle(numberStyle);
                 }
-                
+
                 Cell dateCell = row.createCell(colIdx++);
                 if (invoice.getDueDate() != null) {
                     dateCell.setCellValue(java.sql.Date.valueOf(invoice.getDueDate()));
@@ -550,11 +549,11 @@ public class ExcelExportService {
                 } else {
                     dateCell.setCellValue("");
                 }
-                
+
                 row.createCell(colIdx++).setCellValue(invoice.getDaysUntilDue());
                 row.createCell(colIdx++).setCellValue(invoice.getStatus() != null ? invoice.getStatus() : "");
             }
-            
+
             // Auto-size columns
             for (int i = 0; i < headers.length; i++) {
                 sheet.autoSizeColumn(i);
@@ -563,22 +562,22 @@ public class ExcelExportService {
                     sheet.setColumnWidth(i, 3000);
                 }
             }
-            
+
             workbook.write(outputStream);
             return outputStream.toByteArray();
         }
     }
-    
+
     public byte[] exportTopPerformers(TopPerformanceDTO data, String type) throws IOException {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
             Sheet sheet = workbook.createSheet("Top Performers");
-            
+
             // Create styles
             CellStyle headerStyle = createHeaderStyle(workbook);
             CellStyle numberStyle = createNumberStyle(workbook);
-            
+
             int rowIdx = 0;
-            
+
             // Title
             Row titleRow = sheet.createRow(rowIdx++);
             Cell titleCell = titleRow.createCell(0);
@@ -589,9 +588,9 @@ public class ExcelExportService {
             CellStyle titleStyle = workbook.createCellStyle();
             titleStyle.setFont(titleFont);
             titleCell.setCellStyle(titleStyle);
-            
+
             rowIdx++; // Skip a row
-            
+
             // Header row
             Row header = sheet.createRow(rowIdx++);
             String[] headers = {"Rank", "Name", "Amount", "Invoice Count"};
@@ -600,26 +599,26 @@ public class ExcelExportService {
                 cell.setCellValue(headers[i]);
                 cell.setCellStyle(headerStyle);
             }
-            
+
             // Data rows
-            List<TopPerformanceDTO.EntityPerformance> performers = "customers".equals(type) ? 
+            List<TopPerformanceDTO.EntityPerformance> performers = "customers".equals(type) ?
                 data.getTopCustomers() : data.getTopVendors();
-            
+
             int rank = 1;
             for (TopPerformanceDTO.EntityPerformance performer : performers) {
                 Row row = sheet.createRow(rowIdx++);
                 int colIdx = 0;
-                
+
                 row.createCell(colIdx++).setCellValue(rank++);
                 row.createCell(colIdx++).setCellValue(performer.getName() != null ? performer.getName() : "");
-                
+
                 Cell amountCell = row.createCell(colIdx++);
                 amountCell.setCellValue(performer.getAmount());
                 amountCell.setCellStyle(numberStyle);
-                
+
                 row.createCell(colIdx++).setCellValue(performer.getInvoiceCount());
             }
-            
+
             // Auto-size columns
             for (int i = 0; i < headers.length; i++) {
                 sheet.autoSizeColumn(i);
@@ -628,12 +627,12 @@ public class ExcelExportService {
                     sheet.setColumnWidth(i, 3000);
                 }
             }
-            
+
             workbook.write(outputStream);
             return outputStream.toByteArray();
         }
     }
-    
+
     private CellStyle createHeaderStyle(Workbook workbook) {
         CellStyle style = workbook.createCellStyle();
         Font font = workbook.createFont();
@@ -648,31 +647,31 @@ public class ExcelExportService {
         style.setFillPattern(CellStyle.SOLID_FOREGROUND);
         return style;
     }
-    
+
     private CellStyle createNumberStyle(Workbook workbook) {
         CellStyle style = workbook.createCellStyle();
         DataFormat numberFormat = workbook.createDataFormat();
         style.setDataFormat(numberFormat.getFormat("#,##0.00"));
         return style;
     }
-    
+
     private CellStyle createDateStyle(Workbook workbook) {
         CellStyle style = workbook.createCellStyle();
         CreationHelper createHelper = workbook.getCreationHelper();
         style.setDataFormat(createHelper.createDataFormat().getFormat("dd-MM-yyyy"));
         return style;
     }
-    
+
     public byte[] exportDebtorsCreditors(List<Map<String, Object>> debtors, List<Map<String, Object>> creditors, String type) throws IOException {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
             Sheet sheet = workbook.createSheet("Debtors & Creditors");
-            
+
             // Create styles
             CellStyle headerStyle = createHeaderStyle(workbook);
             CellStyle numberStyle = createNumberStyle(workbook);
-            
+
             int rowIdx = 0;
-            
+
             // Title
             Row titleRow = sheet.createRow(rowIdx++);
             Cell titleCell = titleRow.createCell(0);
@@ -683,9 +682,9 @@ public class ExcelExportService {
             CellStyle titleStyle = workbook.createCellStyle();
             titleStyle.setFont(titleFont);
             titleCell.setCellStyle(titleStyle);
-            
+
             rowIdx++; // Skip a row
-            
+
             // Header row
             Row header = sheet.createRow(rowIdx++);
             String[] headers = {"Rank", "Name", "Outstanding Amount", "debtors".equals(type) ? "Days Overdue" : "Days Until Due"};
@@ -694,18 +693,18 @@ public class ExcelExportService {
                 cell.setCellValue(headers[i]);
                 cell.setCellStyle(headerStyle);
             }
-            
+
             // Data rows
             List<Map<String, Object>> data = "debtors".equals(type) ? debtors : creditors;
-            
+
             int rank = 1;
             for (Map<String, Object> entity : data) {
                 Row row = sheet.createRow(rowIdx++);
                 int colIdx = 0;
-                
+
                 row.createCell(colIdx++).setCellValue(rank++);
                 row.createCell(colIdx++).setCellValue(entity.get("name") != null ? entity.get("name").toString() : "");
-                
+
                 Cell amountCell = row.createCell(colIdx++);
                 Object amount = entity.get("amount");
                 if (amount instanceof Number) {
@@ -715,11 +714,11 @@ public class ExcelExportService {
                     amountCell.setCellValue(0.0);
                     amountCell.setCellStyle(numberStyle);
                 }
-                
+
                 Object days = "debtors".equals(type) ? entity.get("daysOverdue") : entity.get("daysUntilDue");
                 row.createCell(colIdx++).setCellValue(days instanceof Number ? ((Number) days).intValue() : 0);
             }
-            
+
             // Auto-size columns
             for (int i = 0; i < headers.length; i++) {
                 sheet.autoSizeColumn(i);
@@ -728,19 +727,19 @@ public class ExcelExportService {
                     sheet.setColumnWidth(i, 3000);
                 }
             }
-            
+
             workbook.write(outputStream);
             return outputStream.toByteArray();
         }
     }
-    
+
     private List<OverdueInvoiceDTO> combineLists(List<OverdueInvoiceDTO> list1, List<OverdueInvoiceDTO> list2) {
         List<OverdueInvoiceDTO> combined = new java.util.ArrayList<>();
         if (list1 != null) combined.addAll(list1);
         if (list2 != null) combined.addAll(list2);
         return combined;
     }
-    
+
     private List<UpcomingInvoiceDTO> combineDueLists(List<UpcomingInvoiceDTO> list1, List<UpcomingInvoiceDTO> list2) {
         List<UpcomingInvoiceDTO> combined = new java.util.ArrayList<>();
         if (list1 != null) combined.addAll(list1);

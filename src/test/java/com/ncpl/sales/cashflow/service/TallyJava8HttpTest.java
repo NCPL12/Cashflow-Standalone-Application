@@ -18,6 +18,7 @@ class TallyJava8HttpTest {
             while((n=exchange.getRequestBody().read(buffer))!=-1) input.write(buffer,0,n);
             String request=new String(input.toByteArray(),StandardCharsets.UTF_8); requests.add(request);
             String xml="<ENVELOPE><HEADER><STATUS>1</STATUS></HEADER><BODY><DATA><COLLECTION>";
+            if(request.contains("<TYPE>Group</TYPE>")) xml+="<GROUP NAME=\"Retention Amounts\"><PARENT>Sundry Debtors</PARENT></GROUP><GROUP NAME=\"Sundry Debtors\"><PARENT>Current Assets</PARENT></GROUP>";
             if(request.contains("<TYPE>Bill</TYPE>")) {
                 xml+="<BILL NAME=\"INV-1\"><PARENT>Customer</PARENT><BILLDATE>20260101</BILLDATE><BILLCREDITPERIOD>30 Days</BILLCREDITPERIOD><CLOSINGBALANCE>-1200.00</CLOSINGBALANCE></BILL>";
                 xml+="<BILL NAME=\"ADV-1\"><ISADVANCE>Yes</ISADVANCE><PARENT>Customer</PARENT><BILLDATE>20260101</BILLDATE><CLOSINGBALANCE>100</CLOSINGBALANCE></BILL>";

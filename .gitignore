@@ -15,3 +15,17 @@ uploads/
 .classpath
 .project
 .env
+
+# Local runtime, backups and machine settings
+backups/
+runtime/
+*.class
+*.sql
+*.dump
+*.bak
+.env.*
+!.env.example
+application-local.properties
+config/*local*.properties
+__pycache__/
+*.pyc

@@ -148,8 +148,8 @@ function escapeHtml(value) {
         .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
 }
 
-async function fetchOutstanding(type) {
-    const response = await fetch(`/api/cashflow/tally/outstanding?type=${encodeURIComponent(type)}`, {
+async function fetchOutstanding(type, retentionOnly = false) {
+    const response = await fetch(`/api/cashflow/tally/outstanding?type=${encodeURIComponent(type)}&retentionOnly=${retentionOnly}`, {
         credentials: 'same-origin'
     });
     if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
@@ -314,10 +314,10 @@ async function refreshOutstandingCounts() {
         ]);
         const receivableCount = document.getElementById('outstandingReceivablesCount');
         const payableCount = document.getElementById('outstandingPayablesCount');
-        if (receivableCount) receivableCount.textContent = `${receivables.count || 0} bills`;
-        if (payableCount) payableCount.textContent = `${payables.count || 0} bills`;
-        const receivableTotal = Number(receivables.total) || 0;
-        const payableTotal = Number(payables.total) || 0;
+        if (receivableCount) receivableCount.textContent = `${receivables.allCount ?? receivables.count ?? 0} bills`;
+        if (payableCount) payableCount.textContent = `${payables.allCount ?? payables.count ?? 0} bills`;
+        const receivableTotal = Number(receivables.allTotal ?? receivables.total) || 0;
+        const payableTotal = Number(payables.allTotal ?? payables.total) || 0;
         const totalInflow = document.getElementById('totalInflow');
         const totalOutflow = document.getElementById('totalOutflow');
         const netCashflow = document.getElementById('netCashflow');
@@ -881,8 +881,10 @@ async function openCostCentresPanel(scrollIntoView = true) {
 }
 
 function renderOutstandingAnalysis() {
-    const state = window.outstandingState;
+    const rows = window.outstandingState.rows.filter(row => Boolean(row.retention) === Boolean(window.outstandingRetentionOnly));
+    const state = { rows, total: rows.reduce((sum,row) => sum + (Number(row.amount)||0),0) };
     const buckets = [
+        { key: 'unallocated', label: 'Unallocated balance', color: '#64748b' },
         { key: 'current', label: 'Current', color: '#16a34a' },
         { key: '0-30', label: '0–30 days', color: '#3b82f6' },
         { key: '31-60', label: '31–60 days', color: '#f59e0b' },
@@ -945,7 +947,7 @@ function getFilteredOutstandingRows() {
     const party = document.getElementById('outstandingPartyFilter')?.value || 'all';
     const search = (document.getElementById('outstandingSearch')?.value || '').trim().toLowerCase();
     return window.outstandingState.rows.filter(row =>
-        (!window.outstandingRetentionOnly || row.retention === true) &&
+        (Boolean(row.retention) === Boolean(window.outstandingRetentionOnly)) &&
         (aging === 'all' || row.agingBucket === aging) &&
         (status === 'all' || String(row.status || '').toLowerCase() === status) &&
         (party === 'all' || row.partyName === party) &&
@@ -976,6 +978,11 @@ function sortOutstandingRows(rows) {
 }
 
 function renderOutstandingTable() {
+    document.querySelectorAll('.col-retention').forEach(cell => cell.hidden = true);
+    const amountLabel = document.getElementById('outstandingAmountLabel');
+    if (amountLabel) amountLabel.textContent = window.outstandingRetentionOnly ? 'Retention' : 'Outstanding';
+    const title = document.getElementById('outstandingPanelTitle');
+    if (title && window.outstandingState.type) title.textContent = `${window.outstandingRetentionOnly ? 'Retention' : 'Outstanding (excluding retention)'} ${window.outstandingState.type === 'receivables' ? 'Receivables' : 'Payables'}`;
     const rows = sortOutstandingRows(getFilteredOutstandingRows());
     const total = rows.reduce((sum, row) => sum + Math.round((Number(row.amount) || 0) * 100), 0) / 100;
     document.getElementById("outstandingFilteredTotal").textContent = formatCurrency(total);
@@ -988,10 +995,10 @@ function renderOutstandingTable() {
     window.outstandingRenderedRows = rows;
     const tbody = document.getElementById('outstandingTableBody');
     const resultCount = document.getElementById('outstandingResultCount');
-    if (resultCount) resultCount.textContent = `${rows.length} of ${window.outstandingState.rows.length} bills`;
+    if (resultCount) resultCount.textContent = `${rows.length} of ${window.outstandingState.rows.filter(row => Boolean(row.retention) === Boolean(window.outstandingRetentionOnly)).length} bills`;
     if (!tbody) return;
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">No matching bills found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No matching bills found</td></tr>';
         return;
     }
     tbody.innerHTML = rows.map((row, index) => {
@@ -1005,7 +1012,7 @@ function renderOutstandingTable() {
             <td class="col-date">${escapeHtml(formatDate(row.dueDate))}</td>
             <td class="col-age">${row.billAgeDays == null ? '—' : `${Number(row.billAgeDays) || 0} days`}</td>
             <td class="col-amount fw-semibold">${formatCurrency(row.amount)}</td>
-            <td class="col-retention fw-semibold">${row.retention ? formatCurrency(row.retentionAmount) : '—'}</td>
+            <td class="col-retention fw-semibold" hidden>${row.retention ? formatCurrency(row.retentionAmount) : '—'}</td>
             <td class="col-days ${isOverdue ? 'text-danger' : ''}">${escapeHtml(days)}</td>
             <td class="col-status"><span class="badge ${isOverdue ? 'bg-danger' : 'bg-success'}">${escapeHtml(row.status)}</span></td>
         </tr>`;
@@ -1031,7 +1038,8 @@ function openInvoiceDrawer(row) {
     document.getElementById('invoiceDetailStatus').className = 'invoice-detail-status';
     document.getElementById('invoiceLiveDetails').classList.add('d-none');
     const loadButton = document.getElementById('loadInvoiceTallyDetails');
-    loadButton.disabled = false;
+    loadButton.disabled = Boolean(row.retentionBalanceOnly);
+    if (row.retentionBalanceOnly) document.getElementById('invoiceDetailStatus').textContent = 'Tally ledger balance without a bill allocation. Invoice and due dates are not available.';
     loadButton.innerHTML = '<i class="fas fa-arrows-rotate me-2"></i>Load invoice details from Tally';
     document.getElementById('invoiceDetailDrawer').classList.add('show');
     document.getElementById('invoiceDetailDrawer').setAttribute('aria-hidden', 'false');
@@ -1146,11 +1154,11 @@ async function openOutstandingPanel(type, scrollIntoView = true, resetFilters = 
     document.getElementById('outstandingTableBody').innerHTML = '<tr><td colspan="9" class="text-center py-4">Loading…</td></tr>';
     if (scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     try {
-        const data = await fetchOutstanding(type);
-        window.outstandingState = { type, rows: data.rows || [], total: Number(data.total) || 0 };
-        document.getElementById('outstandingPanelSubtitle').textContent = `${data.count || 0} outstanding bills`;
+        const [data, retained] = await Promise.all([fetchOutstanding(type), fetchOutstanding(type, true)]);
+        window.outstandingState = { type, rows: [...(data.rows || []), ...(retained.rows || [])], total: Number(data.total) || 0 };
+        document.getElementById('outstandingPanelSubtitle').textContent = `Normal outstanding ${formatCurrency(data.total)} | Retention separately ${formatCurrency(retained.total)} | Overview total ${formatCurrency(data.allTotal)}`;
         const countEl = document.getElementById(type === 'receivables' ? 'outstandingReceivablesCount' : 'outstandingPayablesCount');
-        if (countEl) countEl.textContent = `${data.count || 0} bills`;
+        if (countEl) countEl.textContent = `${data.allCount ?? data.count ?? 0} bills`;
         renderOutstandingAnalysis();
         renderOutstandingTable();
     } catch (error) {
@@ -1175,7 +1183,7 @@ async function exportOutstandingExcel() {
     button.disabled = true;
     try {
         const query = new URLSearchParams({ type, aging, status, party, search, retentionOnly: Boolean(window.outstandingRetentionOnly) });
-        const filename = type === 'receivables' ? 'Outstanding-Receivables.xlsx' : 'Outstanding-Payables.xlsx';
+        const filename = `${window.outstandingRetentionOnly ? 'Retention' : 'Outstanding'}-${type}.xlsx`;
         await downloadExcel(`/api/cashflow/tally/outstanding/export?${query}`, filename);
     } catch (error) {
         console.error('Outstanding export failed:', error);
@@ -1242,12 +1250,13 @@ function updateDashboard(data) {
         const el = document.getElementById(id);
         if (el) el.textContent = val;
     });
-    
+
     console.log('📊 Dashboard updated with fresh data');
 }
 
 // ========== MODAL POPULATION ==========
 function populateTable(tbodyId, rows, badgeText = 'Overdue', badgeClass = 'bg-danger') {
+    rows = rows.filter(i => !Boolean(i.retention));
     const tbody = document.getElementById(tbodyId);
     if (!tbody) return;
     tbody.innerHTML = '';
@@ -1303,9 +1312,9 @@ function openDetailsModal(type) {
         if (tbody) {
             tbody.innerHTML = '';
             // Aggregate totals from overdueReceivables and dueReceivables
-            const allRec = [...(data.overdueReceivables || []), ...(data.dueReceivables || [])];
+            const allRec = [...(data.overdueReceivables || []), ...(data.dueReceivables || [])].filter(i => !Boolean(i.retention));
             const stats = {};
-            
+
             allRec.forEach(inv => {
                 const name = inv.customerName || 'Unknown';
                 if (!stats[name]) stats[name] = { count: 0, amount: 0 };
@@ -1346,18 +1355,18 @@ function applyModalFilters() {
     const fromDate = document.getElementById('modalFromDate')?.value || '';
     const toDate = document.getElementById('modalToDate')?.value || '';
     const minAmount = parseFloat(document.getElementById('modalMinAmount')?.value) || 0;
-    
+
     const filterTable = (tbodyId) => {
         const tbody = document.getElementById(tbodyId);
         if (!tbody) return;
-        
+
         Array.from(tbody.querySelectorAll('tr')).forEach(row => {
             if (row.cells.length < 5) return;
-            
+
             const name = (row.cells[1]?.textContent || '').toLowerCase();
             const amount = parseAmount(row.cells[2]?.textContent);
             const dueDate = row.cells[3]?.textContent || '';
-            
+
             let visible = true;
             if (searchName && !name.includes(searchName)) visible = false;
             if (minAmount && amount < minAmount) visible = false;
@@ -1371,24 +1380,24 @@ function applyModalFilters() {
                 const to = new Date(toDate);
                 if (rowDate > to) visible = false;
             }
-            
+
             row.style.display = visible ? '' : 'none';
         });
     };
-    
+
     filterTable('modalReceivablesBody');
     filterTable('modalPayablesBody');
-    
+
     // Also filter the All tab content
     const allBody = document.getElementById('modalAllBody');
     if (allBody) {
         Array.from(allBody.querySelectorAll('tr')).forEach(row => {
             if (row.cells.length < 5) return;
-            
+
             const name = (row.cells[1]?.textContent || '').toLowerCase();
             const amount = parseAmount(row.cells[2]?.textContent);
             const dueDate = row.cells[3]?.textContent || '';
-            
+
             let visible = true;
             if (searchName && !name.includes(searchName)) visible = false;
             if (minAmount && amount < minAmount) visible = false;
@@ -1402,7 +1411,7 @@ function applyModalFilters() {
                 const to = new Date(toDate);
                 if (rowDate > to) visible = false;
             }
-            
+
             row.style.display = visible ? '' : 'none';
         });
     }
@@ -1413,22 +1422,22 @@ function applyCustomersModalFilters() {
     const searchName = (document.getElementById('customersModalSearchName')?.value || '').toLowerCase();
     const minInvoices = parseInt(document.getElementById('customersModalMinInvoices')?.value) || 0;
     const minAmount = parseFloat(document.getElementById('customersModalMinAmount')?.value) || 0;
-    
+
     const tbody = document.getElementById('activeCustomersModalBody');
     if (!tbody) return;
-    
+
     Array.from(tbody.querySelectorAll('tr')).forEach(row => {
         if (row.cells.length < 3) return;
-        
+
         const name = (row.cells[0].textContent || '').toLowerCase();
         const invoiceCount = parseInt(row.cells[1].textContent) || 0;
         const amount = parseAmount(row.cells[2].textContent);
-        
+
         let visible = true;
         if (searchName && !name.includes(searchName)) visible = false;
         if (minInvoices && invoiceCount < minInvoices) visible = false;
         if (minAmount && amount < minAmount) visible = false;
-        
+
         row.style.display = visible ? '' : 'none';
     });
 }
@@ -1640,7 +1649,7 @@ function wireEvents() {
             }
         });
     });
-    
+
     const mappings = [
         ['tileActiveCustomers', () => openDetailsModal('activeCustomers')],
         ['tileOverdueReceivables', () => openDetailsModal('receivables')],
@@ -1754,6 +1763,7 @@ function wireEvents() {
         window.outstandingRetentionOnly = !window.outstandingRetentionOnly;
         event.currentTarget.setAttribute('aria-pressed', String(window.outstandingRetentionOnly));
         event.currentTarget.classList.toggle('active', window.outstandingRetentionOnly);
+        renderOutstandingAnalysis();
         renderOutstandingTable();
     });
     document.querySelectorAll('.outstanding-sort').forEach(button => button.addEventListener('click', () => {

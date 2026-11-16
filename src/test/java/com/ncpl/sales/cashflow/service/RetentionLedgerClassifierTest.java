@@ -21,8 +21,8 @@ class RetentionLedgerClassifierTest {
         byte[] bytes=new ExcelExportService().exportOutstandingInvoices(Arrays.asList(retention,ordinary),"Test");
         try(XSSFWorkbook book=new XSSFWorkbook(new ByteArrayInputStream(bytes))){
             assertEquals(100,book.getSheetAt(0).getRow(3).getCell(4).getNumericCellValue());
-            assertEquals(100,book.getSheetAt(0).getRow(3).getCell(9).getNumericCellValue());
-            assertEquals(0,book.getSheetAt(0).getRow(4).getCell(9).getNumericCellValue());
+            assertNull(book.getSheetAt(0).getRow(3).getCell(9));
+            assertNull(book.getSheetAt(0).getRow(4).getCell(9));
         }
     }
 }
