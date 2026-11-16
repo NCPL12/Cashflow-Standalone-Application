@@ -12,6 +12,11 @@ import java.util.stream.Collectors;
 public class ProjectedCashflowService {
     public Map<String,Object> project(List<InvoiceEntity> source, LocalDate from, LocalDate to,
             String granularity, BigDecimal opening, LocalDate openingDate, LocalDate today) {
+        return project(source,from,to,granularity,opening,openingDate,today,false);
+    }
+    public Map<String,Object> project(List<InvoiceEntity> source, LocalDate from, LocalDate to,
+            String granularity, BigDecimal opening, LocalDate openingDate, LocalDate today, boolean retentionOnly) {
+        if (retentionOnly) { opening=null; openingDate=null; }
         if (from == null) from = today;
         if (to == null) to = from.plusDays(89);
         if (from.isAfter(to) || ChronoUnit.DAYS.between(from, to) > 370)
@@ -24,6 +29,7 @@ public class ProjectedCashflowService {
             throw new IllegalArgumentException("Opening balance date must be on or before the forecast From date.");
         Map<String,InvoiceEntity> unique = new LinkedHashMap<>();
         for (InvoiceEntity b : source) {
+            if (RetentionLedgerClassifier.isRetentionRecord(b) != retentionOnly) continue;
             String key = b.getInvoiceType()+"|"+b.getCustomerName()+"|"+b.getInvoiceNumber()+"|"+b.getInvoiceDate()+"|"+b.getDueDate()+"|"+money(b.getInvoiceValue());
             unique.putIfAbsent(key,b);
         }
@@ -55,7 +61,7 @@ public class ProjectedCashflowService {
             periods.add(p);start=end.plusDays(1);
         }
         Map<String,Object> result=new LinkedHashMap<>();
-        result.put("from",from);result.put("to",to);result.put("granularity",granularity);result.put("periods",periods);
+        result.put("retentionOnly",retentionOnly);result.put("from",from);result.put("to",to);result.put("granularity",granularity);result.put("periods",periods);
         result.put("openingBalance",rangeOpening);result.put("balanceAsOf",openingDate);result.put("enteredOpeningBalance",opening);
         result.put("carriedNet",carried);result.put("closingBalance",closing);result.put("finalCumulative",net);
         result.put("totalReceivables",receipts);result.put("totalPayables",payments);result.put("backlogBills",rows(backlog,today));
@@ -64,7 +70,7 @@ public class ProjectedCashflowService {
         return result;
     }
     public LocalDate effectiveDate(InvoiceEntity b,LocalDate today) {
-        if (RetentionLedgerClassifier.isRetention(b.getCustomerName()) && b.getExpectedCashDate()==null) return null;
+        if (RetentionLedgerClassifier.isRetentionRecord(b) && b.getExpectedCashDate()==null) return null;
         // An explicit but expired promise must be rescheduled; do not fall back to due date.
         LocalDate date=b.getExpectedCashDate()!=null?b.getExpectedCashDate():b.getDueDate();
         return date==null||date.isBefore(today)?null:date;

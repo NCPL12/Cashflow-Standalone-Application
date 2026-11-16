@@ -72,7 +72,7 @@ public class TallySyncService {
         }
         logger.info("Starting live TallyPrime synchronization... (force={})", force);
         LocalDateTime syncStartTime = LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
-        
+
         try {
             if (lastSyncMetadata == null) {
                 lastSyncMetadata = initializeSyncMetadata();
@@ -88,13 +88,13 @@ public class TallySyncService {
 
             TallySyncStatusEntity syncStatus = createSyncStatus(syncStartTime, savedInvoices.size(), "SUCCESS", null);
             syncStatusRepository.save(syncStatus);
-            
+
             lastSyncMetadata.setLastSyncTime(syncStartTime);
             lastSyncMetadata.setLastSyncEndTime(LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")));
             lastSyncMetadata.setInvoicesSynced(savedInvoices.size());
             lastSyncMetadata.setLastSyncStatus("SUCCESS");
             lastSyncMetadata.setLastErrorMessage(null);
-            
+
         } catch (IOException e) {
             logger.error("IO Error during Tally sync: {}", e.getMessage(), e);
             recordSyncFailure("IO Error: " + e.getMessage());
@@ -164,6 +164,8 @@ public class TallySyncService {
                 entity.setInvoiceValue(BigDecimal.valueOf(invoice.getInvoiceValue()));
                 entity.setInvoiceType(InvoiceEntity.InvoiceType.valueOf(invoice.getType().name()));
             }
+            entity.setRetention(invoice.getRetention());
+            entity.setRetentionBalanceOnly(invoice.getRetentionBalanceOnly());
             InvoiceEntity saved = invoiceRepository.save(entity);
             snapshot.add(saved);
             retainedIds.add(saved.getId());
@@ -229,23 +231,25 @@ public class TallySyncService {
     private InvoiceEntity convertToEntity(Invoice invoice) {
         InvoiceEntity entity = new InvoiceEntity();
         entity.setCustomerName(invoice.getCustomerName());
+        entity.setRetention(invoice.getRetention());
+        entity.setRetentionBalanceOnly(invoice.getRetentionBalanceOnly());
         entity.setInvoiceNumber(invoice.getInvoiceNumber());
         entity.setInvoiceDate(invoice.getInvoiceDate());
         entity.setDueDate(invoice.getDueDate());
         entity.setInvoiceValue(BigDecimal.valueOf(invoice.getInvoiceValue()));
-        
+
         String type = invoice.getType().toString();
         entity.setInvoiceType(InvoiceEntity.InvoiceType.valueOf(type));
         entity.setSource("TALLY");
-        
+
         return entity;
     }
 
     private boolean validateInvoice(Invoice invoice) {
         return invoice.getInvoiceNumber() != null && !invoice.getInvoiceNumber().trim().isEmpty()
             && invoice.getCustomerName() != null && !invoice.getCustomerName().trim().isEmpty()
-            && invoice.getInvoiceValue() > 0
-            && invoice.getInvoiceDate() != null;
+            && (invoice.getInvoiceValue() > 0 || (invoice.getInvoiceValue() < 0 && Boolean.TRUE.equals(invoice.getRetention()) && Boolean.TRUE.equals(invoice.getRetentionBalanceOnly())) )
+            && (invoice.getInvoiceDate() != null || (Boolean.TRUE.equals(invoice.getRetention()) && Boolean.TRUE.equals(invoice.getRetentionBalanceOnly())));
     }
 
     private TallySyncStatusEntity createSyncStatus(LocalDateTime startTime, int count, String status, String error) {
@@ -272,7 +276,7 @@ public class TallySyncService {
         lastSyncMetadata.setLastSyncStatus("FAILED");
         lastSyncMetadata.setLastErrorMessage(errorMessage);
         lastSyncMetadata.setLastSyncEndTime(LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")));
-        
+
         try {
             TallySyncStatusEntity syncStatus = createSyncStatus(LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")), 0, "FAILED", errorMessage);
             syncStatusRepository.save(syncStatus);
@@ -327,4 +331,3 @@ public class TallySyncService {
         return status;
     }
 }
-

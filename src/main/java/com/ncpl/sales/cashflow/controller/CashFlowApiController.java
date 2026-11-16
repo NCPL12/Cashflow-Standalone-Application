@@ -201,7 +201,7 @@ public class CashFlowApiController {
             try {
                 logger.info("💾 Persistence: Deleting old EXCEL records...");
                 invoiceRepository.deleteBySource("EXCEL");
-                
+
                 logger.info("💾 Persistence: Mapping {} invoices to entities...", invoices.size());
                 List<com.ncpl.sales.cashflow.entity.InvoiceEntity> entities = invoices.stream()
                         .filter(inv -> inv != null && inv.getCustomerName() != null)
@@ -218,7 +218,7 @@ public class CashFlowApiController {
                             return entity;
                         })
                         .collect(Collectors.toList());
-                
+
                 logger.info("💾 Persistence: Saving {} entities to MySQL...", entities.size());
                 invoiceRepository.saveAll(entities);
                 invoiceRepository.flush();
@@ -294,7 +294,7 @@ public class CashFlowApiController {
             if (sessionInvoices != null) {
                 for (Invoice inv : sessionInvoices) {
                     boolean match = (id != null && id.equals(inv.getId())) ||
-                                    (id == null && inv.getCustomerName().equals(customerName) && 
+                                    (id == null && inv.getCustomerName().equals(customerName) &&
                                      ((inv.getInvoiceNumber() == null && invoiceNumber == null) ||
                                       (inv.getInvoiceNumber() != null && inv.getInvoiceNumber().equals(invoiceNumber))));
                     if (match) {
@@ -338,7 +338,7 @@ public class CashFlowApiController {
             Files.copy(file.getInputStream(), target);
 
             List<Invoice> invoices = excelReaderService.readExcelFile(target.toString());
-            AnalyticsDTO analytics = analyticsService.analyzeMonthlyAndWeekly(invoices);
+            AnalyticsDTO analytics = analyticsService.analyzeMonthlyAndWeekly(normalDetailInvoices(invoices));
 
             sessionDataService.setUploadedFileName(originalName == null ? filename : originalName);
             sessionDataService.setSavedFilePath(target.toString());
@@ -366,7 +366,9 @@ public class CashFlowApiController {
         }
 
         try {
-            AgingAnalysisService.AgingAnalysisDTO aging = agingAnalysisService.analyzeAging(file);
+            List<Invoice> invoices = convertEntitiesToInvoices(customerVendorAnalysisService.parseToEntities(file));
+            AgingAnalysisService.AgingAnalysisDTO aging = agingAnalysisService.analyzeAging(normalDetailInvoices(invoices));
+            sessionDataService.setInvoices(invoices);
 
             sessionDataService.setUploadedFileName(file.getOriginalFilename());
             sessionDataService.setAgingAnalysisData(aging);
@@ -393,8 +395,10 @@ public class CashFlowApiController {
         }
 
         try {
+            List<Invoice> invoices = convertEntitiesToInvoices(customerVendorAnalysisService.parseToEntities(file));
             CustomerVendorAnalysisService.CustomerVendorAnalysisDTO analysis = customerVendorAnalysisService
-                    .analyze(file);
+                    .analyze(normalDetailInvoices(invoices));
+            sessionDataService.setInvoices(invoices);
 
             sessionDataService.setUploadedFileName(filename);
             sessionDataService.setCustomerVendorData(analysis);
@@ -447,7 +451,7 @@ public class CashFlowApiController {
             // Generate analysis for response (Overdue Only)
             List<Invoice> modelInvoices = convertEntitiesToInvoices(entities);
             CustomerVendorAnalysisService.CustomerVendorAnalysisDTO analysis = customerVendorAnalysisService
-                    .analyzeOverdueOnly(modelInvoices);
+                    .analyzeOverdueOnly(normalDetailInvoices(modelInvoices));
 
             // Save to session WITH file path
             sessionDataService.setUploadedFileName(filename);
@@ -476,7 +480,7 @@ public class CashFlowApiController {
             String source = sessionDataService.isTallyMode() ? "TALLY" : "EXCEL";
             Long dbCount = invoiceRepository.countBySource(source);
             logger.info("🔍 Session Check: No session data, checking DB for source '{}'... Found: {}", source, dbCount);
-            
+
             if (dbCount > 0) {
                 hasData = true;
                 fileName = sessionDataService.isTallyMode() ? "Tally 6.2 Sync" : "Shared Database Records";
@@ -580,18 +584,13 @@ public class CashFlowApiController {
             LocalDate toDate = parseDate(toDateParam);
             boolean filtered = month != null || week != null || fromDate != null || toDate != null;
 
-            if (!filtered) {
-                AnalyticsDTO cached = sessionDataService.getAnalyticsData();
-                if (cached != null) {
-                    return ResponseEntity.ok(cached);
-                }
-            }
 
-            List<Invoice> invoices = resolveInvoices();
-            if (invoices == null || invoices.isEmpty()) {
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
 
             List<Invoice> scoped = filterInvoices(invoices, month, week, fromDate, toDate);
             AnalyticsDTO analytics = analyticsService.analyzeMonthlyAndWeekly(scoped);
@@ -621,19 +620,13 @@ public class CashFlowApiController {
             Integer week = normalizeWeek(weekParam);
             boolean filtered = month != null || week != null;
 
-            if (!filtered) {
-                CustomerVendorAnalysisService.CustomerVendorAnalysisDTO cached = sessionDataService
-                        .getCustomerVendorData();
-                if (cached != null) {
-                    return ResponseEntity.ok(cached);
-                }
-            }
 
-            List<Invoice> invoices = resolveInvoices();
-            if (invoices == null || invoices.isEmpty()) {
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
 
             List<Invoice> scoped = (month != null || week != null)
                     ? InvoiceFilterUtil.filterByDueDate(invoices, month, week)
@@ -671,18 +664,13 @@ public class CashFlowApiController {
             Integer week = normalizeWeek(weekParam);
             boolean filtered = month != null || week != null;
 
-            if (!filtered) {
-                CustomerVendorAnalysisService.CustomerVendorAnalysisDTO cached = sessionDataService.getOverdueData();
-                if (cached != null) {
-                    return ResponseEntity.ok(cached);
-                }
-            }
 
-            List<Invoice> invoices = resolveInvoices();
-            if (invoices == null || invoices.isEmpty()) {
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
 
             List<Invoice> scoped = (month != null || week != null)
                     ? InvoiceFilterUtil.filterByDueDate(invoices, month, week)
@@ -719,18 +707,13 @@ public class CashFlowApiController {
             LocalDate toDate = parseDate(toDateParam);
             boolean filtered = month != null || week != null || fromDate != null || toDate != null;
 
-            List<Invoice> invoices = resolveInvoices();
-            if (invoices == null || invoices.isEmpty()) {
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
 
-            if (!filtered) {
-                AgingAnalysisService.AgingAnalysisDTO cached = sessionDataService.getAgingAnalysisData();
-                if (cached != null) {
-                    return ResponseEntity.ok(cached);
-                }
-            }
 
             // DEBUG: Log invoice data
             System.out.println("=== AGING ANALYSIS DEBUG ===");
@@ -785,24 +768,22 @@ public class CashFlowApiController {
             LocalDate fromDate = parseDate(fromDateParam);
             LocalDate toDate = parseDate(toDateParam);
 
-            AgingAnalysisService.AgingAnalysisDTO data = sessionDataService.getAgingAnalysisData();
-
-            if (data == null || month != null || week != null || fromDate != null || toDate != null) {
-                List<Invoice> invoices = resolveInvoices();
-                if (invoices == null || invoices.isEmpty()) {
-                    return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                            .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
-                }
-                List<Invoice> scoped;
-                if (fromDate != null || toDate != null) {
-                    scoped = InvoiceFilterUtil.filterByDueDateRange(invoices, fromDate, toDate);
-                } else if (month != null || week != null) {
-                    scoped = InvoiceFilterUtil.filterByDueDate(invoices, month, week);
-                } else {
-                    scoped = invoices;
-                }
-                data = agingAnalysisService.analyzeAging(scoped);
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
+            List<Invoice> scoped;
+            if (fromDate != null || toDate != null) {
+                scoped = InvoiceFilterUtil.filterByDueDateRange(invoices, fromDate, toDate);
+            } else if (month != null || week != null) {
+                scoped = InvoiceFilterUtil.filterByDueDate(invoices, month, week);
+            } else {
+                scoped = invoices;
+            }
+            // Recompute from normal detail instead of reusing an inclusive overview cache.
+            AgingAnalysisService.AgingAnalysisDTO data = agingAnalysisService.analyzeAging(scoped);
 
             byte[] report = agingAnalysisService.generateDetailedReport(data);
             HttpHeaders headers = new HttpHeaders();
@@ -842,11 +823,12 @@ public class CashFlowApiController {
             @RequestParam(value = "month", required = false) String monthParam,
             @RequestParam(value = "week", required = false) Integer weekParam) {
         try {
-            List<Invoice> invoices = resolveInvoices();
-            if (invoices == null || invoices.isEmpty()) {
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
             YearMonth month = parseYearMonth(monthParam);
             Integer week = normalizeWeek(weekParam);
             TopPerformanceDTO dto = insightsService.buildTopPerformance(invoices, month, week);
@@ -868,11 +850,12 @@ public class CashFlowApiController {
             @RequestParam(value = "fromDate", required = false) String fromDateParam,
             @RequestParam(value = "toDate", required = false) String toDateParam) {
         try {
-            List<Invoice> invoices = resolveInvoices();
-            if (invoices == null || invoices.isEmpty()) {
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
 
             LocalDate fromDate = parseDate(fromDateParam);
             LocalDate toDate = parseDate(toDateParam);
@@ -965,11 +948,12 @@ public class CashFlowApiController {
             @RequestParam(value = "month", required = false) String monthParam,
             @RequestParam(value = "week", required = false) Integer weekParam) {
         try {
-            List<Invoice> invoices = resolveInvoices();
-            if (invoices == null || invoices.isEmpty()) {
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
 
             LocalDate fromDate = null;
             LocalDate toDate = null;
@@ -1039,11 +1023,12 @@ public class CashFlowApiController {
             @RequestParam(value = "month", required = false) String monthParam,
             @RequestParam(value = "week", required = false) Integer weekParam) {
         try {
-            List<Invoice> invoices = resolveInvoices();
-            if (invoices == null || invoices.isEmpty()) {
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
             YearMonth month = parseYearMonth(monthParam);
             Integer week = normalizeWeek(weekParam);
             ExecutiveSummaryDTO dto = insightsService.buildExecutiveSummary(invoices, month, week);
@@ -1078,6 +1063,8 @@ public class CashFlowApiController {
             List<OverdueInvoiceDTO> payables = data.getOverduePayables() != null ? data.getOverduePayables()
                     : com.ncpl.sales.cashflow.util.Java8Collections.list();
 
+            receivables = receivables.stream().filter(i -> !com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(i)).collect(java.util.stream.Collectors.toList());
+            payables = payables.stream().filter(i -> !com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(i)).collect(java.util.stream.Collectors.toList());
             byte[] excel = excelExportService.exportOverdueInvoices(receivables, payables, type);
             HttpHeaders headers = new HttpHeaders();
             headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=Overview-Overdue-Invoices.xlsx");
@@ -1110,6 +1097,8 @@ public class CashFlowApiController {
                     : com.ncpl.sales.cashflow.util.Java8Collections.list();
             List<UpcomingInvoiceDTO> payables = data.getDuePayables() != null ? data.getDuePayables() : com.ncpl.sales.cashflow.util.Java8Collections.list();
 
+            receivables = receivables.stream().filter(i -> !com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(i)).collect(java.util.stream.Collectors.toList());
+            payables = payables.stream().filter(i -> !com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(i)).collect(java.util.stream.Collectors.toList());
             byte[] excel = excelExportService.exportDueInvoices(receivables, payables, type);
             HttpHeaders headers = new HttpHeaders();
             headers.add(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=Overview-Due-Invoices.xlsx");
@@ -1133,11 +1122,12 @@ public class CashFlowApiController {
             @RequestParam(value = "fromDate", required = false) String fromDateParam,
             @RequestParam(value = "toDate", required = false) String toDateParam) {
         try {
-            List<Invoice> invoices = resolveInvoices();
-            if (invoices == null || invoices.isEmpty()) {
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
 
             // Apply filters
             LocalDate fromDate = parseDate(fromDateParam);
@@ -1176,11 +1166,12 @@ public class CashFlowApiController {
             @RequestParam(value = "fromDate", required = false) String fromDateParam,
             @RequestParam(value = "toDate", required = false) String toDateParam) {
         try {
-            List<Invoice> invoices = resolveInvoices();
-            if (invoices == null || invoices.isEmpty()) {
+            List<Invoice> allDetailInvoices = resolveInvoices();
+            if (allDetailInvoices == null || allDetailInvoices.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(com.ncpl.sales.cashflow.util.Java8Collections.map("error", "No data in session. Please upload a file."));
             }
+            List<Invoice> invoices = normalDetailInvoices(allDetailInvoices);
 
             LocalDate fromDate = parseDate(fromDateParam);
             LocalDate toDate = parseDate(toDateParam);
@@ -1285,11 +1276,11 @@ public class CashFlowApiController {
             // EXCEL MODE - Prioritize Database for multi-user synchronization
             logger.info("💾 Resolve: Fetching EXCEL records from MySQL...");
             List<com.ncpl.sales.cashflow.entity.InvoiceEntity> entities = invoiceRepository.findBySource("EXCEL");
-            
+
             if (!entities.isEmpty()) {
                 List<Invoice> invoices = convertEntitiesToInvoices(entities);
                 logger.info("💾 Resolve: Retrieved {} EXCEL invoices from MySQL", invoices.size());
-                
+
                 // Sync session state so UI components (like filename display) remain active
                 sessionDataService.setInvoices(invoices);
                 if (!sessionDataService.hasUploadedFile()) {
@@ -1314,7 +1305,7 @@ public class CashFlowApiController {
                 sessionDataService.setInvoices(reloaded);
                 return reloaded;
             }
-            
+
             logger.info("💾 Resolve: No data found anywhere.");
             return sessionInvoices;
         }
@@ -1330,7 +1321,16 @@ public class CashFlowApiController {
                 Invoice.InvoiceType.valueOf(entity.getInvoiceType().name()));
         invoice.setId(entity.getId());
         invoice.setReconciled(entity.isReconciled());
+        invoice.setRetention(entity.getRetention());
+        invoice.setRetentionBalanceOnly(entity.getRetentionBalanceOnly());
         return invoice;
+    }
+
+    /** Normal analytical detail excludes dedicated retention ledgers; overview source stays inclusive. */
+    private List<Invoice> normalDetailInvoices(List<Invoice> invoices) {
+        return invoices.stream()
+                .filter(invoice -> !com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(invoice))
+                .collect(Collectors.toList());
     }
 
     private void applyBankBalance(OverviewAnalysisDTO dto) {
@@ -1387,7 +1387,7 @@ public class CashFlowApiController {
     /**
      * Trigger manual Tally 6.2 synchronization.
      * Reads from SME network Tally edit log and imports new invoices.
-     * 
+     *
      * @return Sync status information
      */
     @PostMapping("/tally/sync")
@@ -1415,7 +1415,7 @@ public class CashFlowApiController {
 
     /**
      * Get current Tally sync status and configuration.
-     * 
+     *
      * @return Sync metadata and config status
      */
     @GetMapping("/tally/status")
@@ -1470,11 +1470,14 @@ public class CashFlowApiController {
 
     @GetMapping("/tally/outstanding")
     public ResponseEntity<?> getTallyOutstanding(
-            @RequestParam(value = "type") String type) {
+            @RequestParam(value = "type") String type,
+            @RequestParam(defaultValue = "false") boolean retentionOnly) {
         try {
             Invoice.InvoiceType invoiceType = parseOutstandingType(type);
-            List<Invoice> invoices = convertEntitiesToInvoices(invoiceRepository.findBySource("TALLY")).stream()
-                    .filter(invoice -> invoice.getType() == invoiceType)
+            List<Invoice> all = convertEntitiesToInvoices(invoiceRepository.findBySource("TALLY")).stream()
+                    .filter(invoice -> invoice.getType() == invoiceType).collect(java.util.stream.Collectors.toList());
+            List<Invoice> invoices = all.stream()
+                    .filter(invoice -> com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(invoice) == retentionOnly)
                     .sorted((left, right) -> Double.compare(right.getInvoiceValue(), left.getInvoiceValue()))
                     .collect(java.util.stream.Collectors.toList());
 
@@ -1485,6 +1488,11 @@ public class CashFlowApiController {
                     .mapToDouble(Invoice::getInvoiceValue).sum();
 
             return ResponseEntity.ok(com.ncpl.sales.cashflow.util.Java8Collections.map(
+                    "allCount", all.size(),
+                    "allTotal", all.stream().mapToDouble(Invoice::getInvoiceValue).sum(),
+                    "retentionCount", all.stream().filter(i -> com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(i)).count(),
+                    "retentionTotal", all.stream().filter(i -> com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(i)).mapToDouble(Invoice::getInvoiceValue).sum(),
+                    "retentionOnly", retentionOnly,
                     "type", type.toLowerCase(Locale.ROOT),
                     "count", invoices.size(),
                     "total", total,
@@ -1519,7 +1527,7 @@ public class CashFlowApiController {
         }
         Map<String, com.ncpl.sales.cashflow.entity.InvoiceEntity> uniqueTallyBills = new LinkedHashMap<>();
         for (com.ncpl.sales.cashflow.entity.InvoiceEntity bill : invoiceRepository.findBySource("TALLY")) {
-            uniqueTallyBills.putIfAbsent(forecastBillKey(bill), bill);
+            if (!com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(bill)) uniqueTallyBills.putIfAbsent(forecastBillKey(bill), bill);
         }
         List<com.ncpl.sales.cashflow.entity.InvoiceEntity> allTallyBills = new ArrayList<>(uniqueTallyBills.values());
         List<com.ncpl.sales.cashflow.entity.InvoiceEntity> datedBills = allTallyBills.stream()
@@ -1629,7 +1637,7 @@ public class CashFlowApiController {
         try {
             Map<String, com.ncpl.sales.cashflow.entity.InvoiceEntity> uniqueEntities = new LinkedHashMap<>();
             for (com.ncpl.sales.cashflow.entity.InvoiceEntity bill : invoiceRepository.findBySource("TALLY")) {
-                uniqueEntities.putIfAbsent(forecastBillKey(bill), bill);
+                if (!com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(bill)) uniqueEntities.putIfAbsent(forecastBillKey(bill), bill);
             }
             List<Invoice> invoices = convertEntitiesToInvoices(new ArrayList<>(uniqueEntities.values())).stream()
                     .filter(invoice -> invoice.getDueDate() != null)
@@ -1950,7 +1958,7 @@ public class CashFlowApiController {
             String normalizedSearch = search.trim().toLowerCase(Locale.ROOT);
             List<Invoice> invoices = convertEntitiesToInvoices(invoiceRepository.findBySource("TALLY")).stream()
                     .filter(invoice -> invoice.getType() == invoiceType)
-                    .filter(invoice -> !retentionOnly || com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetention(invoice.getCustomerName()))
+                    .filter(invoice -> com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(invoice) == retentionOnly)
                     .filter(invoice -> matchesOutstandingAging(invoice, aging))
                     .filter(invoice -> "all".equalsIgnoreCase(status)
                             || ("overdue".equalsIgnoreCase(status) && invoice.isOverdue())
@@ -1965,6 +1973,7 @@ public class CashFlowApiController {
 
             String label = invoiceType == Invoice.InvoiceType.INFLOW
                     ? "Outstanding Receivables" : "Outstanding Payables";
+            if (retentionOnly) label = label.replace("Outstanding", "Retention");
             byte[] excel = excelExportService.exportOutstandingInvoices(invoices, label);
             String filename = label.replace(' ', '-') + ".xlsx";
             HttpHeaders headers = new HttpHeaders();
@@ -2036,10 +2045,11 @@ public class CashFlowApiController {
         row.put("dueDate", invoice.getDueDate());
         row.put("billAgeDays", invoice.getBillAgeDays());
         row.put("amount", invoice.getInvoiceValue());
-        boolean retention = com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetention(invoice.getCustomerName());
+        boolean retention = com.ncpl.sales.cashflow.service.RetentionLedgerClassifier.isRetentionRecord(invoice);
         row.put("retention", retention);
+        row.put("retentionBalanceOnly", Boolean.TRUE.equals(invoice.getRetentionBalanceOnly()));
         row.put("retentionAmount", retention ? invoice.getInvoiceValue() : 0d);
-        row.put("status", invoice.isOverdue() ? "Overdue" : "Current");
+        row.put("status", Boolean.TRUE.equals(invoice.getRetentionBalanceOnly()) ? "Unallocated" : (invoice.isOverdue() ? "Overdue" : "Current"));
         row.put("daysOverdue", invoice.getDaysOverdue());
         row.put("daysUntilDue", invoice.getDaysUntilDue() == Long.MAX_VALUE ? null : invoice.getDaysUntilDue());
         row.put("agingBucket", outstandingAgingKey(invoice));
@@ -2052,6 +2062,7 @@ public class CashFlowApiController {
     }
 
     private String outstandingAgingKey(Invoice invoice) {
+        if (Boolean.TRUE.equals(invoice.getRetentionBalanceOnly())) return "unallocated";
         if (!invoice.isOverdue()) return "current";
         long days = invoice.getDaysOverdue();
         if (days <= 30) return "0-30";
@@ -2076,8 +2087,8 @@ public class CashFlowApiController {
                 return ResponseEntity.ok(com.ncpl.sales.cashflow.util.Java8Collections.map("hasData", false, "message", "No Tally data available"));
             }
 
-            List<Invoice> invoices = convertEntitiesToInvoices(tallyInvoices);
-            AnalyticsDTO analytics = analyticsService.analyzeMonthlyAndWeekly(invoices);
+            List<Invoice> invoices = normalDetailInvoices(convertEntitiesToInvoices(tallyInvoices));
+            AnalyticsDTO analytics = analyticsService.analyzeMonthlyAndWeekly(normalDetailInvoices(invoices));
 
             sessionDataService.setInvoices(invoices);
             sessionDataService.setAnalyticsData(analytics);

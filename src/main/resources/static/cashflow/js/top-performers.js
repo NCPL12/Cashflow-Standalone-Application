@@ -1,4 +1,3 @@
-/* Unused module disabled: not in use.
 (() => {
     const charts = {
         customers: null,
@@ -273,7 +272,3 @@
         });
     });
 })();
-
-
-
-*/

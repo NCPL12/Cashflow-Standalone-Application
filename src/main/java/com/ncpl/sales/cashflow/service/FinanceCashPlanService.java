@@ -28,6 +28,7 @@ public class FinanceCashPlanService {
             SALES_PROJECTION, CUSTOMER_ADVANCE, ONE_TIME_EXPENSE, MANUAL_CASH_IN, MANUAL_CASH_OUT));
 
     private final InvoiceRepository invoiceRepository;
+    private final CashPlanPaymentTerms paymentTerms;
     private final FinanceCashPlanEntryRepository entryRepository;
     private final FinanceCashPlanSettingsRepository settingsRepository;
     private final RecurringTransactionRepository recurringRepository;
@@ -36,6 +37,11 @@ public class FinanceCashPlanService {
                                   FinanceCashPlanEntryRepository entryRepository,
                                   FinanceCashPlanSettingsRepository settingsRepository,
                                   RecurringTransactionRepository recurringRepository) {
+        this(invoiceRepository,entryRepository,settingsRepository,recurringRepository,new CashPlanPaymentTerms(new com.fasterxml.jackson.databind.ObjectMapper()));
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public FinanceCashPlanService(InvoiceRepository invoiceRepository,FinanceCashPlanEntryRepository entryRepository,FinanceCashPlanSettingsRepository settingsRepository,RecurringTransactionRepository recurringRepository,CashPlanPaymentTerms paymentTerms){
+        this.paymentTerms=paymentTerms;
         this.invoiceRepository = invoiceRepository;
         this.entryRepository = entryRepository;
         this.settingsRepository = settingsRepository;
@@ -44,6 +50,11 @@ public class FinanceCashPlanService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> buildPlan(YearMonth startMonth, int monthCount) {
+        return buildPlan(startMonth, monthCount, false);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> buildPlan(YearMonth startMonth, int monthCount, boolean retentionOnly) {
         if (monthCount < 1 || monthCount > 12) throw new IllegalArgumentException("Months must be between 1 and 12.");
         LocalDate from = startMonth.atDay(1);
         LocalDate to = startMonth.plusMonths(monthCount - 1L).atEndOfMonth();
@@ -51,25 +62,59 @@ public class FinanceCashPlanService {
         for (int i = 0; i < monthCount; i++) buckets.add(new MonthBucket(startMonth.plusMonths(i)));
 
         List<InvoiceEntity> tallyBills = invoiceRepository.findBySource("TALLY");
+        BigDecimal retentionIn = BigDecimal.ZERO, retentionOut = BigDecimal.ZERO;
+        BigDecimal awaitingIn = BigDecimal.ZERO, awaitingOut = BigDecimal.ZERO;
+        int awaitingCount = 0;
+        LocalDate today = LocalDate.now();
+        for (InvoiceEntity bill : tallyBills) {
+            if (!RetentionLedgerClassifier.isRetentionRecord(bill)) continue;
+            BigDecimal amount = safe(bill.getInvoiceValue());
+            boolean inflow = bill.getInvoiceType() == InvoiceEntity.InvoiceType.INFLOW;
+            if (inflow) retentionIn = retentionIn.add(amount); else retentionOut = retentionOut.add(amount);
+            if (bill.getExpectedCashDate() == null || bill.getExpectedCashDate().isBefore(today)) {
+                if (inflow) awaitingIn = awaitingIn.add(amount); else awaitingOut = awaitingOut.add(amount);
+                awaitingCount++;
+            }
+        }
+        LiveCashPlanTerms.Result terms=retentionOnly?new LiveCashPlanTerms.Result(Collections.emptyList(),"RETENTION_ONLY",null,null,0):paymentTerms.resolve(tallyBills);
+        List<CashPlanPaymentTerms.Rule> rules=terms.rules;
+        BigDecimal commissioningBalance=BigDecimal.ZERO, commissioningAwaiting=BigDecimal.ZERO, paymentTermsReviewBalance=BigDecimal.ZERO;
+        int paymentTermsAppliedCount=0,paymentTermsReviewCount=0;
         int missingCashDate = 0;
         int overdueMovedToFirstMonth = 0;
         for (InvoiceEntity bill : tallyBills) {
-            LocalDate cashDate = bill.getExpectedCashDate() != null ? bill.getExpectedCashDate() : bill.getDueDate();
+            if (RetentionLedgerClassifier.isRetentionRecord(bill) != retentionOnly) continue;
+            BigDecimal normalAmount=bill.getInvoiceValue();
+            if(!retentionOnly){
+                CashPlanPaymentTerms.Allocation allocation=paymentTerms.allocation(bill,tallyBills,rules);
+                if(allocation.review){paymentTermsReviewBalance=paymentTermsReviewBalance.add(safe(bill.getInvoiceValue()));paymentTermsReviewCount++;continue;}
+                normalAmount=allocation.normal;
+                if(allocation.applied){
+                    paymentTermsAppliedCount++;
+                    commissioningBalance=commissioningBalance.add(allocation.held);
+                    if(allocation.expectedDate==null||allocation.expectedDate.isBefore(today))commissioningAwaiting=commissioningAwaiting.add(allocation.held);
+                    else {MonthBucket milestoneBucket=bucketFor(buckets,allocation.expectedDate);if(milestoneBucket!=null){milestoneBucket.commissioningCashIn=milestoneBucket.commissioningCashIn.add(allocation.held);}}
+                }
+            }
+            LocalDate cashDate = retentionOnly ? bill.getExpectedCashDate()
+                    : (bill.getExpectedCashDate() != null ? bill.getExpectedCashDate() : bill.getDueDate());
+            if (retentionOnly && cashDate != null && cashDate.isBefore(today)) cashDate = null;
             if (cashDate == null || bill.getInvoiceValue() == null) {
                 missingCashDate++;
                 continue;
             }
             if (cashDate.isBefore(from)) {
+                if (retentionOnly) continue;
                 cashDate = from;
                 overdueMovedToFirstMonth++;
             }
             MonthBucket bucket = bucketFor(buckets, cashDate);
             if (bucket == null) continue;
             if (bill.getInvoiceType() == InvoiceEntity.InvoiceType.INFLOW) {
-                bucket.tallyReceivables = bucket.tallyReceivables.add(bill.getInvoiceValue());
+                bucket.tallyReceivables = bucket.tallyReceivables.add(normalAmount);
                 bucket.receivableCount++;
             } else if (bill.getInvoiceType() == InvoiceEntity.InvoiceType.OUTFLOW) {
-                bucket.tallyPayables = bucket.tallyPayables.add(bill.getInvoiceValue());
+                bucket.tallyPayables = bucket.tallyPayables.add(normalAmount);
                 bucket.payableCount++;
             }
         }
@@ -78,6 +123,7 @@ public class FinanceCashPlanService {
                 .findByActiveTrueAndPlannedDateBetweenOrderByPlannedDateAsc(from, to);
         int manualEntryCount = 0;
         for (FinanceCashPlanEntryEntity entry : entries) {
+            if (retentionOnly) continue; // Normal manual cash adjustments are never retention releases.
             MonthBucket bucket = bucketFor(buckets, entry.getPlannedDate());
             if (bucket == null) continue;
             if (MANUAL_CASH_IN.equals(entry.getEntryType())) {
@@ -90,12 +136,28 @@ public class FinanceCashPlanService {
         }
         List<Map<String, Object>> periods = new ArrayList<>();
         for (MonthBucket bucket : buckets) {
-            BigDecimal totalCashIn = bucket.tallyReceivables.add(bucket.manualCashIn);
+            BigDecimal totalCashIn = bucket.tallyReceivables.add(bucket.commissioningCashIn).add(bucket.manualCashIn);
             BigDecimal totalCashOut = bucket.tallyPayables.add(bucket.manualCashOut);
             periods.add(bucket.toMap(totalCashIn, totalCashOut, totalCashIn.subtract(totalCashOut)));
         }
 
         Map<String, Object> response = new LinkedHashMap<>();
+        response.put("retentionOnly", retentionOnly);
+        response.put("paymentTermsSource",terms.source);
+        response.put("paymentTermsCheckedAt",terms.checkedAt);
+        response.put("paymentTermsWarning",terms.warning);
+        response.put("paymentTermsCheckedVouchers",terms.checkedVouchers);
+        response.put("paymentTermsDeferredLabel",rules.stream().anyMatch(r->"DEFERRED_PAYMENT_TERMS".equals(r.classification))?"deferred payment-term":"commissioning");
+        response.put("commissioningBalance",commissioningBalance);
+        response.put("commissioningAwaitingDate",commissioningAwaiting);
+        response.put("paymentTermsAppliedCount",paymentTermsAppliedCount);
+        response.put("paymentTermsReviewCount",paymentTermsReviewCount);
+        response.put("paymentTermsReviewBalance",paymentTermsReviewBalance);
+        response.put("retentionReceivablesBalance", retentionIn);
+        response.put("retentionPayablesBalance", retentionOut);
+        response.put("retentionAwaitingDateReceivables", awaitingIn);
+        response.put("retentionAwaitingDatePayables", awaitingOut);
+        response.put("retentionAwaitingDateCount", awaitingCount);
         response.put("from", from.toString());
         response.put("to", to.toString());
         response.put("monthCount", monthCount);
@@ -206,7 +268,12 @@ public class FinanceCashPlanService {
         LocalDate from = startMonth.atDay(1);
         LocalDate to = startMonth.plusMonths(monthCount - 1L).atEndOfMonth();
         List<Map<String, Object>> result = new ArrayList<>();
-        for (InvoiceEntity invoice : invoiceRepository.findBySource("TALLY")) {
+        List<InvoiceEntity> scheduleSnapshot=invoiceRepository.findBySource("TALLY");
+        List<CashPlanPaymentTerms.Rule> scheduleRules=paymentTerms.resolve(scheduleSnapshot).rules;
+        for (InvoiceEntity invoice : scheduleSnapshot) {
+            CashPlanPaymentTerms.Allocation allocation=paymentTerms.allocation(invoice,scheduleSnapshot,scheduleRules);
+            if(allocation.review)continue;
+            if (RetentionLedgerClassifier.isRetentionRecord(invoice)) continue;
             LocalDate effective = invoice.getExpectedCashDate() != null ? invoice.getExpectedCashDate() : invoice.getDueDate();
             if (effective != null && effective.isAfter(to)) continue;
             Map<String, Object> row = new LinkedHashMap<>();
@@ -217,7 +284,7 @@ public class FinanceCashPlanService {
             row.put("dueDate", invoice.getDueDate());
             row.put("expectedCashDate", invoice.getExpectedCashDate());
             row.put("effectiveCashDate", effective == null || effective.isBefore(from) ? from : effective);
-            row.put("amount", invoice.getInvoiceValue());
+            row.put("amount", allocation.normal);
             row.put("direction", invoice.getInvoiceType());
             row.put("remarks", invoice.getCashflowRemarks());
             row.put("overdue", effective != null && effective.isBefore(from));
@@ -322,6 +389,7 @@ public class FinanceCashPlanService {
     private static final class MonthBucket {
         private final YearMonth month;
         private BigDecimal tallyReceivables = BigDecimal.ZERO;
+        private BigDecimal commissioningCashIn=BigDecimal.ZERO;
         private BigDecimal manualCashIn = BigDecimal.ZERO;
         private BigDecimal tallyPayables = BigDecimal.ZERO;
         private BigDecimal manualCashOut = BigDecimal.ZERO;
@@ -335,6 +403,7 @@ public class FinanceCashPlanService {
             result.put("month", month.toString());
             result.put("label", month.format(DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH)));
             result.put("tallyCashIn", tallyReceivables);
+            result.put("commissioningCashIn",commissioningCashIn);
             result.put("manualCashIn", manualCashIn);
             result.put("totalCashIn", totalCashIn);
             result.put("tallyCashOut", tallyPayables);

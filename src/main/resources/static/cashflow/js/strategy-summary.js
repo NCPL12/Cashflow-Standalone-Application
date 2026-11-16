@@ -1,4 +1,3 @@
-/* Unused module disabled: not in use.
 (() => {
     const ids = {
         totalInflow: 'summaryTotalInflow',
@@ -187,6 +186,3 @@
         });
     });
 })();
-
-
-*/

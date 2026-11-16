@@ -43,8 +43,14 @@ public class TallyLiveService {
     @Value("${cashflow.tally.company-name:}")
     private String companyName;
 
+    @Value("${cashflow.tally.retention-group:Retention Amounts}")
+    private String retentionGroup = "Retention Amounts";
+
     public List<Invoice> fetchOutstandingBills() throws Exception {
         AdvanceLookup advanceLookup = fetchAdvanceLookup();
+        if (!RetentionGroupHierarchy.isRetentionLedger(retentionGroup,retentionGroup,advanceLookup.groupParents())) {
+            throw new IllegalStateException("Retention group '"+retentionGroup+"' was not found under Current Assets > Sundry Debtors. Check the Tally company and cashflow.tally.retention-group. Previous data is preserved.");
+        }
         String responseXml = post(buildOutstandingBillsRequest());
         Document document = parseXml(responseXml);
         String status = firstText(document.getDocumentElement(), "STATUS");
@@ -83,8 +89,27 @@ public class TallyLiveService {
             Invoice.InvoiceType type = signedBalance < 0
                     ? Invoice.InvoiceType.INFLOW
                     : Invoice.InvoiceType.OUTFLOW;
-            invoices.add(new Invoice(partyName, billName, billDate, dueDate,
-                    Math.abs(signedBalance), type));
+            Invoice invoice = new Invoice(partyName, billName, billDate, dueDate,Math.abs(signedBalance),type);
+            invoice.setRetention(ledger != null && RetentionGroupHierarchy.isRetentionLedger(ledger.parentGroup(),retentionGroup,advanceLookup.groupParents()));
+            invoice.setRetentionBalanceOnly(false);
+            invoices.add(invoice);
+        }
+        // Include the ledger's unallocated/opening remainder without inventing bill or due dates.
+        for (LedgerContext ledger : advanceLookup.ledgerByParty().values()) {
+            if (!RetentionGroupHierarchy.isRetentionLedger(ledger.parentGroup(),retentionGroup,advanceLookup.groupParents())) continue;
+            java.math.BigDecimal allocated = java.math.BigDecimal.ZERO;
+            for (Invoice invoice : invoices) {
+                if (normalize(invoice.getCustomerName()).equals(normalize(ledger.partyName()))) {
+                    java.math.BigDecimal value=java.math.BigDecimal.valueOf(invoice.getInvoiceValue());
+                    allocated=allocated.add(invoice.getType()==Invoice.InvoiceType.INFLOW?value.negate():value);
+                }
+            }
+            java.math.BigDecimal remainder=java.math.BigDecimal.valueOf(ledger.signedClosingBalance()).subtract(allocated).setScale(2,java.math.RoundingMode.HALF_UP);
+            if (remainder.signum()==0) continue;
+            boolean receivableLedger=ledger.signedClosingBalance()<=0;
+            java.math.BigDecimal displayAmount=receivableLedger?remainder.negate():remainder;
+            Invoice residual=new Invoice(ledger.partyName(),displayAmount.signum()<0?"Unallocated retention balance (credit adjustment)":"Unallocated retention balance",null,null,displayAmount.doubleValue(),receivableLedger?Invoice.InvoiceType.INFLOW:Invoice.InvoiceType.OUTFLOW);
+            residual.setRetention(true);residual.setRetentionBalanceOnly(true);invoices.add(residual);
         }
         return invoices;
     }
@@ -935,6 +960,47 @@ public class TallyLiveService {
     public boolean isAvailable() {
         try { request(null, 5000); return true; } catch (Exception e) { return false; }
     }
+
+    /** Minimal read-only voucher metadata used only by Finance Cash Plan. No inventory fetch. */
+    public String cashPlanCompanyName() throws Exception {
+        if(companyName!=null && !companyName.trim().isEmpty())return companyName.trim();
+        Document doc=parseXml(post(buildSimpleCollectionRequest("CashplanCompanies","Company","Name")));
+        Set<String> names=new java.util.LinkedHashSet<>();NodeList list=doc.getElementsByTagName("COMPANY");
+        for(int i=0;i<list.getLength();i++){Element e=(Element)list.item(i);String name=firstNonBlank(e.getAttribute("NAME"),firstText(e,"NAME"));if(name!=null&&!name.trim().isEmpty())names.add(name.trim());}
+        if(names.size()!=1)throw new IllegalStateException("Set cashflow.tally.company-name to the exact company before reading payment terms.");
+        return names.iterator().next();
+    }
+    public String cashPlanConfiguredCompany(){return companyName==null?"":companyName.trim();}
+    public List<CashPlanVoucher> cashPlanHeaders(String company,LocalDate from,LocalDate to)throws Exception{
+        String filter="$Date >= $$Date:\""+from.format(TALLY_FORMULA_DATE)+"\" AND $Date <= $$Date:\""+to.format(TALLY_FORMULA_DATE)+"\" AND $VoucherTypeName = \"Sales\"";
+        return cashPlanRead("CashplanTermsHeaders",company,filter,false);
+    }
+    public List<CashPlanVoucher> cashPlanAmounts(String company,List<String> masterIds)throws Exception{
+        if(masterIds.isEmpty()||masterIds.size()>5)throw new IllegalArgumentException("Read between one and five payment-term vouchers at a time.");
+        List<String> filters=new ArrayList<>();for(String id:masterIds){if(id==null||!id.trim().matches("[0-9]+"))throw new IllegalArgumentException("Invalid Tally voucher identity.");filters.add("$MasterID = "+id.trim());}
+        return cashPlanRead("CashplanTermsAmounts",company,String.join(" OR ",filters),true);
+    }
+    private List<CashPlanVoucher> cashPlanRead(String name,String company,String filter,boolean amounts)throws Exception{
+        String fields="MasterID,AlterID,Date,VoucherTypeName,VoucherNumber,Reference,PartyLedgerName,Narration,IsCancelled,IsOptional";
+        if(amounts)fields+=",AllLedgerEntries.LedgerName,AllLedgerEntries.Amount,AllLedgerEntries.IsPartyLedger";
+        String xml="<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>"+name+"</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>"+escapeXml(company)+"</SVCURRENTCOMPANY></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME=\""+name+"\"><TYPE>Voucher</TYPE><FETCH>"+fields+"</FETCH><FILTER>"+name+"Filter</FILTER></COLLECTION><SYSTEM TYPE=\"Formulae\" NAME=\""+name+"Filter\">"+escapeXml(filter)+"</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>";
+        Document doc=parseXml(post(xml));String status=firstText(doc.getDocumentElement(),"STATUS");
+        if(status!=null&&!"1".equals(status.trim()))throw new IllegalStateException("Tally payment-term export was unsuccessful.");
+        List<CashPlanVoucher> result=new ArrayList<>();NodeList nodes=doc.getElementsByTagName("VOUCHER");
+        for(int i=0;i<nodes.getLength();i++){
+            Element e=(Element)nodes.item(i);String number=firstText(e,"VOUCHERNUMBER");if(number==null||parseDate(firstText(e,"DATE"))==null)continue;
+            if("Yes".equalsIgnoreCase(firstText(e,"ISCANCELLED"))||"Yes".equalsIgnoreCase(firstText(e,"ISOPTIONAL")))continue;
+            CashPlanVoucher v=new CashPlanVoucher();v.masterId=firstText(e,"MASTERID");v.alterId=firstText(e,"ALTERID");v.number=number;v.reference=firstText(e,"REFERENCE");v.party=firstText(e,"PARTYLEDGERNAME");v.narration=firstText(e,"NARRATION");v.date=parseDate(firstText(e,"DATE"));
+            NodeList ledgers=e.getElementsByTagName("ALLLEDGERENTRIES.LIST");if(ledgers.getLength()==0)ledgers=e.getElementsByTagName("LEDGERENTRIES.LIST");
+            for(int j=0;j<ledgers.getLength();j++){Element l=(Element)ledgers.item(j);v.ledgers.add(new LedgerLine(firstText(l,"LEDGERNAME"),parseAmount(firstText(l,"AMOUNT")),isTaxLedger(firstText(l,"LEDGERNAME"))));}
+            result.add(v);
+        }return result;
+    }
+    public static class CashPlanVoucher {
+        public String masterId,alterId,number,reference,party,narration;public LocalDate date;
+        public List<LedgerLine> ledgers=new ArrayList<>();
+    }
+
     public String getServerUrl() { return serverUrl; }
     private String post(String xml) throws Exception { return request(xml, 60000); }
     private synchronized String request(String xml, int timeout) throws Exception {
